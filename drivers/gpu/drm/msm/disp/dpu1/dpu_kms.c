@@ -27,9 +27,13 @@
 #include "dpu_encoder.h"
 #include "dpu_plane.h"
 #include "dpu_crtc.h"
+#include "dpu_resolution_switch.h"
 
 #define CREATE_TRACE_POINTS
 #include "dpu_trace.h"
+
+/* Global DPU KMS pointer for resolution switching */
+static struct dpu_kms *global_dpu_kms = NULL;
 
 /*
  * To enable overall DRM driver logging
@@ -47,6 +51,8 @@
 
 static int dpu_kms_hw_init(struct msm_kms *kms);
 static void _dpu_kms_mmu_destroy(struct dpu_kms *dpu_kms);
+
+
 
 #ifdef CONFIG_DEBUG_FS
 static int _dpu_danger_signal_status(struct seq_file *s,
@@ -1122,6 +1128,17 @@ static int dpu_bind(struct device *dev, struct device *master, void *data)
 	pm_runtime_enable(&pdev->dev);
 	dpu_kms->rpm_enabled = true;
 
+	/* Set global pointer for resolution switching */
+	global_dpu_kms = dpu_kms;
+	dpu_resolution_set_kms(dpu_kms);
+
+	/* Initialize resolution switching */
+	ret = dpu_resolution_init(&pdev->dev);
+	if (ret) {
+		DPU_ERROR("failed to initialize resolution switching: %d\n", ret);
+		/* Continue without resolution switching, not critical */
+	}
+
 	priv->kms = &dpu_kms->base;
 	return ret;
 err:
@@ -1136,6 +1153,13 @@ static void dpu_unbind(struct device *dev, struct device *master, void *data)
 	struct platform_device *pdev = to_platform_device(dev);
 	struct dpu_kms *dpu_kms = platform_get_drvdata(pdev);
 	struct dss_module_power *mp = &dpu_kms->mp;
+
+	/* Cleanup resolution switching */
+	dpu_resolution_cleanup(&pdev->dev);
+	dpu_resolution_clear_kms();
+	
+	/* Clear global pointer */
+	global_dpu_kms = NULL;
 
 	msm_dss_put_clk(mp->clk_config, mp->num_clk);
 	devm_kfree(&pdev->dev, mp->clk_config);
